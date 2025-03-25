@@ -3,9 +3,11 @@ export default {
 		// if it's a get, return 'hi'
 		if (request.method === 'GET') {
 			const shortcode = request.url.split('/').pop()
-			// if the url is in the kv, return the url as a permanent redirect
+			// if there is no shortcode, return the index.html
+			if (!shortcode) return env.ASSETS.fetch(request)
+
 			const url = await env.URL_MAP.get(shortcode)
-			if (url) return new Response(url, { status: 301 })
+			if (url) return Response.redirect(url, 301)
 			return new Response('Not found', { status: 404 })
 		}
 		if (request.method === 'POST') {
@@ -20,7 +22,7 @@ export default {
 			await env.URL_MAP.put(shortcode, postBodyUrl)
 
 			return new Response(
-				JSON.stringify({ url: request.url.split('/').slice(0, -1).join('/') + '/' + shortcode }),
+				JSON.stringify({ url: new URL(request.url).origin + '/' + shortcode }),
 				{
 					status: 201,
 					headers: {
