@@ -1,5 +1,3 @@
-import { AutoRouter, text, error } from 'itty-router';
-
 export default {
 	async fetch(request, env, ctx) {
 		// if it's a get, return 'hi'
@@ -17,7 +15,6 @@ export default {
 			const url = await env.URL_MAP.get(shortcode)
 			if (url) return new Response('Short code already exists', { status: 400 })
 			const data = await request.json()
-			console.log(data)
 			const postBodyUrl = data.url
 			if (!postBodyUrl) return new Response('Missing url', { status: 400 })
 			await env.URL_MAP.put(shortcode, postBodyUrl)
