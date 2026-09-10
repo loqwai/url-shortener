@@ -56,13 +56,11 @@ const handleRead = async (request, env) => {
 	const url = new URL(request.url);
 	const code = decodeURIComponent(url.pathname.slice(1));
 
-	// The UI is public/up.html so Cloudflare Access can gate /up* by path prefix without
-	// putting a login wall in front of every public short link. The asset layer normally
-	// serves it before this Worker runs; this branch is the fallback.
-	if (code === 'up' || code === 'up/') {
-		return env.ASSETS.fetch(new Request(new URL('/up.html', url), request));
-	}
-	if (code === '') return Response.redirect(new URL('/up', url).toString(), 302);
+	// /up is a door for Cloudflare Access, which matches by path prefix: gating /up* prompts
+	// a login and then lands here, while gating / would wall off every public short link.
+	if (code === 'up') return Response.redirect(new URL('/', url).toString(), 302);
+
+	// The asset layer answers / with the UI before this Worker runs; this is the fallback.
 	if (!isValidCode(code)) return env.ASSETS.fetch(request);
 
 	const record = await readRecord(env, code);

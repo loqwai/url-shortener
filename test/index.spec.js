@@ -12,16 +12,18 @@ beforeEach(async () => {
 });
 
 describe('reading', () => {
-	it('sends the root to the upload UI', async () => {
-		const response = await SELF.fetch('https://2cb.pw/', { redirect: 'manual' });
-		expect(response.status).toBe(302);
-		expect(response.headers.get('location')).toBe('https://2cb.pw/up');
+	it('serves a UI at the root that both uploads and shortens', async () => {
+		const response = await SELF.fetch('https://2cb.pw/');
+		expect(response.status).toBe(200);
+		const body = await response.text();
+		expect(body).toContain('Drop files here');
+		expect(body).toContain('Shorten');
 	});
 
-	it('serves the upload UI at /up', async () => {
-		const response = await SELF.fetch('https://2cb.pw/up');
-		expect(response.status).toBe(200);
-		expect(await response.text()).toContain('Drop files here');
+	it('sends /up, the Access door, to the UI', async () => {
+		const response = await SELF.fetch('https://2cb.pw/up', { redirect: 'manual' });
+		expect(response.status).toBe(302);
+		expect(response.headers.get('location')).toBe('https://2cb.pw/');
 	});
 
 	it('redirects a short code to its target', async () => {
