@@ -180,7 +180,7 @@
 		<section class="panel active" id="panel-file">
 			<div id="drop" tabindex="0" role="button">
 				<strong>Drop files here</strong>
-				<span>or click to pick &middot; or press &#8984;V to paste</span>
+				<span>or click to pick &middot; or press <span id="paste-key">Ctrl-V</span> to paste</span>
 			</div>
 			<input type="file" id="picker" multiple hidden />
 		</section>
@@ -215,6 +215,8 @@
 		 * Behind Cloudflare Access the session cookie authorizes everything and no key is
 		 * needed. The stored key is the fallback for when Access is not in front of this page.
 		 */
+		if (/Mac|iPhone|iPad/.test(navigator.platform)) document.getElementById('paste-key').textContent = '⌘V';
+
 		const uploadKey = () => localStorage.getItem('uploadKey') || '';
 		const authHeaders = () => (uploadKey() ? { 'X-Upload-Token': uploadKey() } : {});
 
@@ -445,7 +447,7 @@
 			const field = document.createElement('input');
 			field.type = 'password';
 			field.placeholder = 'upload key';
-			field.style.margin = '10px 0 0';
+			field.style.cssText = 'display:block;width:100%;margin:12px 0 10px';
 			const save = document.createElement('button');
 			save.className = 'go';
 			save.textContent = 'Save key';

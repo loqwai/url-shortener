@@ -36,7 +36,7 @@
 	 * With neither configured, the write endpoints refuse rather than run open.
 	 */
 	"vars": {
-		"ACCESS_TEAM_DOMAIN": "",
+		"ACCESS_TEAM_DOMAIN": "loqwai.cloudflareaccess.com",
 		"ACCESS_AUD": ""
 	}
 }
