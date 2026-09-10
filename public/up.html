@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<meta name="color-scheme" content="dark light" />
+	<title>2cb.pw</title>
+	<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔗</text></svg>" />
+	<style>
+		:root {
+			--bg: #0f1115;
+			--panel: #171a21;
+			--panel-2: #1e222b;
+			--line: #2b313d;
+			--text: #e8ecf3;
+			--muted: #949cad;
+			--accent: #6ea8fe;
+			--good: #4ade80;
+			--bad: #f87171;
+			--radius: 14px;
+		}
+
+		* { box-sizing: border-box; }
+
+		body {
+			margin: 0;
+			padding: clamp(16px, 4vw, 48px) 16px 64px;
+			background: var(--bg);
+			color: var(--text);
+			font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+		}
+
+		main { width: 100%; max-width: 640px; }
+
+		h1 {
+			margin: 0 0 4px;
+			font-size: 28px;
+			letter-spacing: -0.02em;
+		}
+
+		.sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+
+		.tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+
+		.tab {
+			flex: 1;
+			padding: 10px;
+			border: 1px solid var(--line);
+			background: var(--panel);
+			color: var(--muted);
+			border-radius: 10px;
+			font: inherit;
+			font-size: 14px;
+			cursor: pointer;
+		}
+
+		.tab[aria-selected="true"] { background: var(--panel-2); color: var(--text); border-color: var(--accent); }
+
+		.panel { display: none; }
+		.panel.active { display: block; }
+
+		#drop {
+			border: 2px dashed var(--line);
+			border-radius: var(--radius);
+			background: var(--panel);
+			padding: 44px 20px;
+			text-align: center;
+			cursor: pointer;
+			transition: border-color .15s, background .15s;
+		}
+
+		#drop.hot { border-color: var(--accent); background: var(--panel-2); }
+		#drop strong { display: block; font-size: 18px; margin-bottom: 6px; }
+		#drop span { color: var(--muted); font-size: 14px; }
+
+		input[type="text"], input[type="url"], textarea {
+			width: 100%;
+			padding: 12px 14px;
+			background: var(--panel);
+			border: 1px solid var(--line);
+			border-radius: 10px;
+			color: var(--text);
+			font: inherit;
+			margin-bottom: 10px;
+		}
+
+		textarea { min-height: 180px; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; }
+
+		input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+		button.go {
+			width: 100%;
+			padding: 13px;
+			border: 0;
+			border-radius: 10px;
+			background: var(--accent);
+			color: #0b1220;
+			font: inherit;
+			font-weight: 650;
+			cursor: pointer;
+		}
+
+		button.go:disabled { opacity: .5; cursor: default; }
+
+		.optional { color: var(--muted); font-size: 13px; margin: 2px 0 10px; }
+
+		#items { margin-top: 22px; display: flex; flex-direction: column; gap: 10px; }
+
+		.item {
+			background: var(--panel);
+			border: 1px solid var(--line);
+			border-radius: 12px;
+			padding: 12px 14px;
+		}
+
+		.item .row { display: flex; align-items: center; gap: 10px; }
+		.item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+		.item .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+		.item a { color: var(--accent); font-weight: 600; text-decoration: none; }
+		.item .err { color: var(--bad); }
+
+		.copy {
+			border: 1px solid var(--line);
+			background: var(--panel-2);
+			color: var(--text);
+			border-radius: 8px;
+			padding: 6px 10px;
+			font: inherit;
+			font-size: 13px;
+			cursor: pointer;
+			flex: none;
+		}
+
+		.copy.done { color: var(--good); border-color: var(--good); }
+
+		progress {
+			width: 100%;
+			height: 6px;
+			margin-top: 8px;
+			appearance: none;
+			border: 0;
+			border-radius: 99px;
+			background: var(--panel-2);
+			overflow: hidden;
+		}
+
+		progress::-webkit-progress-bar { background: var(--panel-2); }
+		progress::-webkit-progress-value { background: var(--accent); }
+		progress::-moz-progress-bar { background: var(--accent); }
+
+		#notice {
+			display: none;
+			margin-bottom: 16px;
+			padding: 12px 14px;
+			border-radius: 10px;
+			border: 1px solid var(--bad);
+			background: #2a1a1d;
+			font-size: 14px;
+		}
+	</style>
+</head>
+
+<body>
+	<main>
+		<h1>2cb.pw</h1>
+		<p class="sub">Drop a file, paste a screenshot, or shorten a link.</p>
+
+		<div id="notice"></div>
+
+		<div class="tabs" role="tablist">
+			<button class="tab" role="tab" aria-selected="true" data-panel="file">File</button>
+			<button class="tab" role="tab" aria-selected="false" data-panel="link">Link</button>
+			<button class="tab" role="tab" aria-selected="false" data-panel="text">Text</button>
+		</div>
+
+		<section class="panel active" id="panel-file">
+			<div id="drop" tabindex="0" role="button">
+				<strong>Drop files here</strong>
+				<span>or click to pick &middot; or press &#8984;V to paste</span>
+			</div>
+			<input type="file" id="picker" multiple hidden />
+		</section>
+
+		<section class="panel" id="panel-link">
+			<form id="link-form">
+				<input type="url" id="link-url" placeholder="https://example.com/a/very/long/url" required />
+				<input type="text" id="link-code" placeholder="custom code (optional)" autocapitalize="off" spellcheck="false" />
+				<button class="go" type="submit">Shorten</button>
+			</form>
+		</section>
+
+		<section class="panel" id="panel-text">
+			<form id="text-form">
+				<textarea id="text-body" placeholder="Paste text, notes, logs, code&hellip;" required></textarea>
+				<input type="text" id="text-name" placeholder="filename (optional, e.g. notes.md)" autocapitalize="off" spellcheck="false" />
+				<button class="go" type="submit">Post text</button>
+			</form>
+		</section>
+
+		<div id="items"></div>
+	</main>
+
+	<script type="module">
+		const itemsEl = document.getElementById('items');
+		const noticeEl = document.getElementById('notice');
+		const origin = window.location.origin;
+
+		let partSize = 64 * 1024 * 1024;
+
+		/**
+		 * Behind Cloudflare Access the session cookie authorizes everything and no key is
+		 * needed. The stored key is the fallback for when Access is not in front of this page.
+		 */
+		const uploadKey = () => localStorage.getItem('uploadKey') || '';
+		const authHeaders = () => (uploadKey() ? { 'X-Upload-Token': uploadKey() } : {});
+
+		const humanSize = (bytes) => {
+			if (!Number.isFinite(bytes)) return '';
+			const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+			let value = bytes;
+			let unit = 0;
+			while (value >= 1024 && unit < units.length - 1) {
+				value /= 1024;
+				unit += 1;
+			}
+			return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+		};
+
+		const notice = (message) => {
+			noticeEl.textContent = message;
+			noticeEl.style.display = 'block';
+		};
+
+		/** One row per thing being uploaded, reused as it moves from progress to link. */
+		const addRow = (label, detail) => {
+			const row = document.createElement('div');
+			row.className = 'item';
+			row.innerHTML = `<div class="row"><div class="name"></div></div><div class="meta"></div><progress max="100" value="0"></progress>`;
+			row.querySelector('.name').textContent = label;
+			row.querySelector('.meta').textContent = detail || '';
+			itemsEl.prepend(row);
+
+			const bar = row.querySelector('progress');
+			return {
+				progress(fraction) {
+					bar.value = Math.round(fraction * 100);
+				},
+				fail(message) {
+					bar.remove();
+					row.querySelector('.meta').innerHTML = `<span class="err">${message}</span>`;
+				},
+				done(shortUrl) {
+					bar.remove();
+					row.querySelector('.meta').textContent = detail || '';
+					const link = document.createElement('a');
+					link.href = shortUrl;
+					link.textContent = shortUrl.replace(/^https?:\/\//, '');
+					const copy = document.createElement('button');
+					copy.className = 'copy';
+					copy.textContent = 'Copy';
+					copy.addEventListener('click', async () => {
+						await navigator.clipboard.writeText(shortUrl);
+						copy.textContent = 'Copied';
+						copy.classList.add('done');
+					});
+					const container = row.querySelector('.row');
+					container.querySelector('.name').replaceChildren(link);
+					container.append(copy);
+					copy.click();
+				},
+			};
+		};
+
+		/** fetch() cannot report upload progress, so bodies with a size go through XHR. */
+		const send = (method, url, body, onProgress) =>
+			new Promise((resolve, reject) => {
+				const request = new XMLHttpRequest();
+				request.open(method, url);
+				request.responseType = 'json';
+				Object.entries(authHeaders()).forEach(([header, value]) => request.setRequestHeader(header, value));
+				if (onProgress) {
+					request.upload.addEventListener('progress', (event) => {
+						if (event.lengthComputable) onProgress(event.loaded / event.total);
+					});
+				}
+				request.addEventListener('load', () => {
+					const payload = request.response || {};
+					if (request.status >= 200 && request.status < 300) return resolve(payload);
+					reject(new Error(payload.error || `Upload failed (${request.status})`));
+				});
+				request.addEventListener('error', () => reject(new Error('Network error')));
+				request.send(body);
+			});
+
+		const postJson = async (path, body) => {
+			const response = await fetch(path, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json', ...authHeaders() },
+				body: JSON.stringify(body),
+			});
+			const payload = await response.json().catch(() => ({}));
+			if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+			return payload;
+		};
+
+		const uploadSmall = (file, row) => {
+			const query = new URLSearchParams({ name: file.name, type: file.type || 'application/octet-stream' });
+			return send('POST', `/api/upload?${query}`, file, (fraction) => row.progress(fraction));
+		};
+
+		const uploadLarge = async (file, row) => {
+			const created = await postJson('/api/multipart/create', {
+				name: file.name,
+				type: file.type || 'application/octet-stream',
+			});
+			const size = created.partSize || partSize;
+			const total = Math.ceil(file.size / size);
+			const parts = [];
+
+			try {
+				for (let index = 0; index < total; index += 1) {
+					const chunk = file.slice(index * size, Math.min((index + 1) * size, file.size));
+					const query = new URLSearchParams({ key: created.key, uploadId: created.uploadId, part: String(index + 1) });
+					const part = await send('PUT', `/api/multipart/part?${query}`, chunk, (fraction) =>
+						row.progress((index + fraction) / total)
+					);
+					parts.push(part);
+				}
+			} catch (error) {
+				await postJson('/api/multipart/abort', { code: created.code, key: created.key, uploadId: created.uploadId }).catch(() => {});
+				throw error;
+			}
+
+			return postJson('/api/multipart/complete', {
+				code: created.code,
+				key: created.key,
+				uploadId: created.uploadId,
+				name: file.name,
+				size: file.size,
+				type: file.type || 'application/octet-stream',
+				parts,
+			});
+		};
+
+		const upload = async (file) => {
+			const row = addRow(file.name, humanSize(file.size));
+			try {
+				const result = file.size > partSize ? await uploadLarge(file, row) : await uploadSmall(file, row);
+				row.done(result.url);
+			} catch (error) {
+				row.fail(error.message);
+			}
+		};
+
+		const uploadAll = (files) => Array.from(files).forEach(upload);
+
+		// --- tabs ---
+		document.querySelectorAll('.tab').forEach((tab) => {
+			tab.addEventListener('click', () => {
+				document.querySelectorAll('.tab').forEach((other) => other.setAttribute('aria-selected', String(other === tab)));
+				document.querySelectorAll('.panel').forEach((panel) => {
+					panel.classList.toggle('active', panel.id === `panel-${tab.dataset.panel}`);
+				});
+			});
+		});
+
+		// --- drop zone ---
+		const drop = document.getElementById('drop');
+		const picker = document.getElementById('picker');
+
+		drop.addEventListener('click', () => picker.click());
+		drop.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter' || event.key === ' ') picker.click();
+		});
+		picker.addEventListener('change', () => {
+			uploadAll(picker.files);
+			picker.value = '';
+		});
+
+		['dragenter', 'dragover'].forEach((type) =>
+			drop.addEventListener(type, (event) => {
+				event.preventDefault();
+				drop.classList.add('hot');
+			})
+		);
+		['dragleave', 'drop'].forEach((type) =>
+			drop.addEventListener(type, (event) => {
+				event.preventDefault();
+				drop.classList.remove('hot');
+			})
+		);
+		drop.addEventListener('drop', (event) => uploadAll(event.dataTransfer.files));
+
+		// Paste anywhere: files and screenshots upload, a bare URL jumps to the Link tab.
+		window.addEventListener('paste', (event) => {
+			const files = Array.from(event.clipboardData.files);
+			if (files.length) {
+				event.preventDefault();
+				uploadAll(files);
+				return;
+			}
+			if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+			const text = event.clipboardData.getData('text').trim();
+			if (/^https?:\/\/\S+$/.test(text)) {
+				document.querySelector('.tab[data-panel="link"]').click();
+				document.getElementById('link-url').value = text;
+			}
+		});
+
+		// --- shorten a link ---
+		document.getElementById('link-form').addEventListener('submit', async (event) => {
+			event.preventDefault();
+			const url = document.getElementById('link-url');
+			const code = document.getElementById('link-code');
+			const row = addRow(url.value, 'link');
+			try {
+				const result = await postJson('/api/shorten', { url: url.value, code: code.value.trim() || undefined });
+				row.done(result.url);
+				url.value = '';
+				code.value = '';
+			} catch (error) {
+				row.fail(error.message);
+			}
+		});
+
+		// --- post text as a file ---
+		document.getElementById('text-form').addEventListener('submit', (event) => {
+			event.preventDefault();
+			const body = document.getElementById('text-body');
+			const nameField = document.getElementById('text-name');
+			const name = nameField.value.trim() || `note-${new Date().toISOString().slice(0, 10)}.txt`;
+			const type = name.endsWith('.md') ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8';
+			upload(new File([body.value], name, { type }));
+			body.value = '';
+			nameField.value = '';
+		});
+
+		/** Offers a key field, for when this page is not behind Cloudflare Access. */
+		const askForKey = (message) => {
+			notice(message);
+			const field = document.createElement('input');
+			field.type = 'password';
+			field.placeholder = 'upload key';
+			field.style.margin = '10px 0 0';
+			const save = document.createElement('button');
+			save.className = 'go';
+			save.textContent = 'Save key';
+			save.addEventListener('click', () => {
+				localStorage.setItem('uploadKey', field.value.trim());
+				window.location.reload();
+			});
+			noticeEl.append(field, save);
+		};
+
+		// Confirms the session is authorized, and picks up the server's real part size.
+		fetch('/api/whoami', { headers: authHeaders() })
+			.then(async (response) => {
+				const payload = await response.json().catch(() => ({}));
+				if (response.ok) {
+					if (payload.partSize) partSize = payload.partSize;
+					return;
+				}
+				if (response.status === 401 || response.status === 403) {
+					localStorage.removeItem('uploadKey');
+					return askForKey('Not authorized to upload. Sign in, or enter the upload key.');
+				}
+				notice(payload.error || 'Uploads are unavailable.');
+			})
+			.catch(() => {});
+	</script>
+</body>
+
+</html>

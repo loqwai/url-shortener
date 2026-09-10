@@ -1,15 +1,16 @@
 /**
  * For more details on how to configure Wrangler, refer to:
  * https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * Note: `routes` is intentionally absent. This Worker is already bound to the 2cb.pw
+ * hostname in the dashboard; declaring it here risks fighting that binding on deploy.
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "url-shortener",
 	"main": "src/index.js",
 	"compatibility_date": "2025-03-21",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
+	"compatibility_flags": ["nodejs_compat"],
 	"assets": {
 		"binding": "ASSETS",
 		"directory": "./public"
@@ -20,37 +21,22 @@
 	"kv_namespaces": [
 		{
 			"binding": "URL_MAP",
-			"id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+			"id": "e239df04697f45d78631c29760c1a5b9"
 		}
-	]
+	],
+	"r2_buckets": [
+		{
+			"binding": "FILES",
+			"bucket_name": "2cb-files"
+		}
+	],
 	/**
-	 * Smart Placement
-	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
+	 * Uploads require either a verified Cloudflare Access JWT or an UPLOAD_TOKEN secret.
+	 * ACCESS_AUD is the Application Audience tag of the Access app protecting this site.
+	 * With neither configured, the write endpoints refuse rather than run open.
 	 */
-	// "placement": { "mode": "smart" },
-	/**
-	 * Bindings
-	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
-	 * databases, object storage, AI inference, real-time communication and more.
-	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
-	 */
-	/**
-	 * Environment Variables
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
-	 */
-	// "vars": { "MY_VARIABLE": "production_value" },
-	/**
-	 * Note: Use secrets to store sensitive data.
-	 * https://developers.cloudflare.com/workers/configuration/secrets/
-	 */
-	/**
-	 * Static Assets
-	 * https://developers.cloudflare.com/workers/static-assets/binding/
-	 */
-	// "assets": { "directory": "./public/", "binding": "ASSETS" },
-	/**
-	 * Service Bindings (communicate between multiple Workers)
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
-	 */
-	// "services": [{ "binding": "MY_SERVICE", "service": "my-service" }],
+	"vars": {
+		"ACCESS_TEAM_DOMAIN": "",
+		"ACCESS_AUD": ""
+	}
 }

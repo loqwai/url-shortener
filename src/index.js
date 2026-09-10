@@ -1,35 +1,203 @@
+import { authorizeWrite } from './auth.js';
+import { claimCode, deleteRecord, isValidCode, listRecords, readRecord, writeRecord } from './store.js';
+
+/** Chunk size the browser uploads with. Must stay under the Workers request-body limit. */
+const PART_SIZE = 64 * 1024 * 1024;
+const INLINE_TYPES = /^(image\/|video\/|audio\/|text\/|application\/pdf$|application\/json$)/;
+
+const json = (body, status = 200) =>
+	new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+
+const fail = (status, error) => json({ error }, status);
+
+const shortUrl = (request, code) => `${new URL(request.url).origin}/${code}`;
+
+/** Encode a filename for Content-Disposition, which cannot carry raw non-ASCII. */
+const contentDisposition = (name, attachment) => {
+	const safe = (name || 'file').replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '');
+	const encoded = encodeURIComponent(name || 'file');
+	return `${attachment ? 'attachment' : 'inline'}; filename="${safe}"; filename*=UTF-8''${encoded}`;
+};
+
+const serveFile = async (request, env, record) => {
+	// R2 reports a `range` on every read taken from headers, so the request is the only
+	// honest signal of whether the client actually asked for a partial response.
+	const rangeRequested = request.headers.has('range');
+	const object = await env.FILES.get(record.key, { range: request.headers, onlyIf: request.headers });
+	if (!object) return fail(404, 'File is gone');
+
+	const headers = new Headers();
+	object.writeHttpMetadata(headers);
+	headers.set('etag', object.httpEtag);
+	headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+	headers.set('Accept-Ranges', 'bytes');
+	if (record.contentType) headers.set('Content-Type', record.contentType);
+
+	const wantsDownload = new URL(request.url).searchParams.has('dl');
+	const inline = !wantsDownload && INLINE_TYPES.test(record.contentType || '');
+	headers.set('Content-Disposition', contentDisposition(record.name, !inline));
+
+	// `body` is absent when onlyIf turns the read into a 304.
+	if (!('body' in object)) return new Response(null, { status: 304, headers });
+
+	const body = request.method === 'HEAD' ? null : object.body;
+
+	if (rangeRequested && object.range && 'offset' in object.range) {
+		const start = object.range.offset ?? 0;
+		const end = start + (object.range.length ?? object.size - start) - 1;
+		headers.set('Content-Range', `bytes ${start}-${end}/${object.size}`);
+		return new Response(body, { status: 206, headers });
+	}
+
+	return new Response(body, { headers });
+};
+
+const handleRead = async (request, env) => {
+	const url = new URL(request.url);
+	const code = decodeURIComponent(url.pathname.slice(1));
+
+	// The UI is public/up.html so Cloudflare Access can gate /up* by path prefix without
+	// putting a login wall in front of every public short link. The asset layer normally
+	// serves it before this Worker runs; this branch is the fallback.
+	if (code === 'up' || code === 'up/') {
+		return env.ASSETS.fetch(new Request(new URL('/up.html', url), request));
+	}
+	if (code === '') return Response.redirect(new URL('/up', url).toString(), 302);
+	if (!isValidCode(code)) return env.ASSETS.fetch(request);
+
+	const record = await readRecord(env, code);
+	if (!record) return fail(404, 'Not found');
+	if (record.type === 'pending') return fail(409, 'Still uploading');
+	if (record.type === 'file') return serveFile(request, env, record);
+	return Response.redirect(record.url, 301);
+};
+
+const routes = {
+	'POST /api/shorten': async (request, env) => {
+		const { url, code: requested } = await request.json();
+		if (!url || !/^https?:\/\//i.test(url)) return fail(400, 'Provide an http(s) url');
+
+		const { code, error } = await claimCode(env, requested);
+		if (error) return fail(409, error);
+
+		await writeRecord(env, code, { type: 'url', url, createdAt: new Date().toISOString() });
+		return json({ code, url: shortUrl(request, code) }, 201);
+	},
+
+	'POST /api/upload': async (request, env) => {
+		const params = new URL(request.url).searchParams;
+		const name = params.get('name') || 'file';
+		const contentType = params.get('type') || 'application/octet-stream';
+		const { code, error } = await claimCode(env, params.get('code'));
+		if (error) return fail(409, error);
+
+		const key = `${code}/${name}`;
+		const object = await env.FILES.put(key, request.body, { httpMetadata: { contentType } });
+
+		await writeRecord(env, code, {
+			type: 'file',
+			key,
+			name,
+			size: object.size,
+			contentType,
+			createdAt: new Date().toISOString(),
+		});
+		return json({ code, url: shortUrl(request, code) }, 201);
+	},
+
+	'POST /api/multipart/create': async (request, env) => {
+		const { name = 'file', type = 'application/octet-stream', code: requested } = await request.json();
+		const { code, error } = await claimCode(env, requested);
+		if (error) return fail(409, error);
+
+		const key = `${code}/${name}`;
+		const upload = await env.FILES.createMultipartUpload(key, { httpMetadata: { contentType: type } });
+		// Hold the code while the parts upload, so a second upload cannot claim it.
+		await writeRecord(env, code, { type: 'pending', key, name, createdAt: new Date().toISOString() });
+		return json({ code, key, uploadId: upload.uploadId, partSize: PART_SIZE }, 201);
+	},
+
+	'PUT /api/multipart/part': async (request, env) => {
+		const params = new URL(request.url).searchParams;
+		const key = params.get('key');
+		const uploadId = params.get('uploadId');
+		const partNumber = Number(params.get('part'));
+		if (!key || !uploadId || !Number.isInteger(partNumber) || partNumber < 1) return fail(400, 'Bad part request');
+
+		const upload = env.FILES.resumeMultipartUpload(key, uploadId);
+		const part = await upload.uploadPart(partNumber, request.body);
+		return json(part);
+	},
+
+	'POST /api/multipart/complete': async (request, env) => {
+		const { code, key, uploadId, parts, name, size, type } = await request.json();
+		if (!code || !key || !uploadId || !Array.isArray(parts)) return fail(400, 'Bad complete request');
+
+		const upload = env.FILES.resumeMultipartUpload(key, uploadId);
+		const object = await upload.complete(parts);
+
+		await writeRecord(env, code, {
+			type: 'file',
+			key,
+			name: name || 'file',
+			size: object.size ?? size,
+			contentType: type || 'application/octet-stream',
+			createdAt: new Date().toISOString(),
+		});
+		return json({ code, url: shortUrl(request, code) }, 201);
+	},
+
+	'POST /api/multipart/abort': async (request, env) => {
+		const { code, key, uploadId } = await request.json();
+		if (key && uploadId) await env.FILES.resumeMultipartUpload(key, uploadId).abort();
+		if (code) {
+			const record = await readRecord(env, code);
+			if (record && record.type === 'pending') await env.URL_MAP.delete(code);
+		}
+		return json({ ok: true });
+	},
+
+	'GET /api/list': async (request, env) => json({ items: await listRecords(env) }),
+
+	'POST /api/delete': async (request, env) => {
+		const { code } = await request.json();
+		if (!code) return fail(400, 'Missing code');
+		return json({ deleted: await deleteRecord(env, code) });
+	},
+
+	'GET /api/whoami': async (request, env, auth) => json({ who: auth.who, partSize: PART_SIZE }),
+};
+
 export default {
-	async fetch(request, env, ctx) {
-		// if it's a get, return 'hi'
-		if (request.method === 'GET') {
-			const shortcode = request.url.split('/').pop()
-			// if there is no shortcode, return the index.html
-			if (!shortcode) return env.ASSETS.fetch(request)
+	async fetch(request, env) {
+		const url = new URL(request.url);
 
-			const url = await env.URL_MAP.get(shortcode)
-			if (url) return Response.redirect(url, 301)
-			return new Response('Not found', { status: 404 })
+		if (url.pathname.startsWith('/api/')) {
+			const auth = await authorizeWrite(request, env);
+			if (!auth.ok) return fail(auth.status, auth.error);
+
+			const route = routes[`${request.method} ${url.pathname}`];
+			if (!route) return fail(404, 'No such endpoint');
+			return route(request, env, auth);
 		}
+
+		if (request.method === 'GET' || request.method === 'HEAD') return handleRead(request, env);
+
+		// The original API shape, kept working: POST /<code> with {"url": "..."} claims that code.
 		if (request.method === 'POST') {
-			// if the url is not in the kv, add it and return the url.
-			// get the shortcode by parsing the url
-			const shortcode = request.url.split('/').pop()
-			const url = await env.URL_MAP.get(shortcode)
-			if (url) return new Response('Short code already exists', { status: 400 })
-			const data = await request.json()
-			const postBodyUrl = data.url
-			if (!postBodyUrl) return new Response('Missing url', { status: 400 })
-			await env.URL_MAP.put(shortcode, postBodyUrl)
+			const auth = await authorizeWrite(request, env);
+			if (!auth.ok) return fail(auth.status, auth.error);
 
-			return new Response(
-				JSON.stringify({ url: new URL(request.url).origin + '/' + shortcode }),
-				{
-					status: 201,
-					headers: {
-						'Content-Type': 'application/json'
-					}
-				}
-			)
+			const code = url.pathname.slice(1);
+			if (!isValidCode(code)) return fail(400, 'Invalid short code');
+			if (await env.URL_MAP.get(code)) return fail(400, 'Short code already exists');
+
+			const { url: target } = await request.json();
+			if (!target) return fail(400, 'Missing url');
+			await writeRecord(env, code, { type: 'url', url: target, createdAt: new Date().toISOString() });
+			return json({ url: shortUrl(request, code) }, 201);
 		}
+
+		return fail(405, 'Method not allowed');
 	},
 };
