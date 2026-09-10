@@ -1,5 +1,15 @@
 import { authorizeWrite } from './auth.js';
-import { ROOT_CODE, claimCode, deleteRecord, isValidCode, listRecords, readRecord, writeRecord } from './store.js';
+import {
+	PERMANENT_CACHE,
+	ROOT_CODE,
+	cachePolicy,
+	claimCode,
+	deleteRecord,
+	isValidCode,
+	listRecords,
+	readRecord,
+	writeRecord,
+} from './store.js';
 
 /** Chunk size the browser uploads with. Must stay under the Workers request-body limit. */
 const PART_SIZE = 64 * 1024 * 1024;
@@ -29,9 +39,7 @@ const serveFile = async (request, env, record) => {
 	const headers = new Headers();
 	object.writeHttpMetadata(headers);
 	headers.set('etag', object.httpEtag);
-	// Uploads never change under their code, so they pin hard. The UI is republished in
-	// place, so it must revalidate or a phone would hold an old build forever.
-	headers.set('Cache-Control', record.cacheControl || 'public, max-age=31536000, immutable');
+	headers.set('Cache-Control', record.cacheControl || PERMANENT_CACHE);
 	headers.set('Accept-Ranges', 'bytes');
 	if (record.contentType) headers.set('Content-Type', record.contentType);
 
@@ -69,18 +77,31 @@ const handleRead = async (request, env) => {
 	if (!record) return fail(404, 'Not found');
 	if (record.type === 'pending') return fail(409, 'Still uploading');
 	if (record.type === 'file') return serveFile(request, env, record);
-	return Response.redirect(record.url, 301);
+
+	// A 301 is cached indefinitely by browsers whatever we say, so anything short of a
+	// permanent policy has to go out as a 302 for the policy to mean anything.
+	const policy = record.cacheControl || PERMANENT_CACHE;
+	const permanent = policy === PERMANENT_CACHE;
+	return new Response(null, {
+		status: permanent ? 301 : 302,
+		headers: { Location: record.url, 'Cache-Control': policy },
+	});
 };
 
 const routes = {
 	'POST /api/shorten': async (request, env) => {
-		const { url, code: requested } = await request.json();
+		const { url, code: requested, cache } = await request.json();
 		if (!url || !/^https?:\/\//i.test(url)) return fail(400, 'Provide an http(s) url');
 
 		const { code, error } = await claimCode(env, requested);
 		if (error) return fail(409, error);
 
-		await writeRecord(env, code, { type: 'url', url, createdAt: new Date().toISOString() });
+		await writeRecord(env, code, {
+			type: 'url',
+			url,
+			cacheControl: cachePolicy(cache),
+			createdAt: new Date().toISOString(),
+		});
 		return json({ code, url: shortUrl(request, code) }, 201);
 	},
 
@@ -92,6 +113,7 @@ const routes = {
 		// Publishing the UI overwrites one fixed record instead of claiming a new code, and
 		// must revalidate rather than pin, since its URL never changes.
 		const publishingUi = params.get('root') === '1';
+		const cacheControl = publishingUi ? cachePolicy('revalidate') : cachePolicy(params.get('cache'));
 		const { code, error } = publishingUi ? { code: ROOT_CODE } : await claimCode(env, params.get('code'));
 		if (error) return fail(409, error);
 
@@ -104,21 +126,27 @@ const routes = {
 			name,
 			size: object.size,
 			contentType,
-			cacheControl: publishingUi ? 'public, max-age=0, must-revalidate' : undefined,
+			cacheControl,
 			createdAt: new Date().toISOString(),
 		});
 		return json({ code, url: shortUrl(request, code) }, 201);
 	},
 
 	'POST /api/multipart/create': async (request, env) => {
-		const { name = 'file', type = 'application/octet-stream', code: requested } = await request.json();
+		const { name = 'file', type = 'application/octet-stream', code: requested, cache } = await request.json();
 		const { code, error } = await claimCode(env, requested);
 		if (error) return fail(409, error);
 
 		const key = `${code}/${name}`;
 		const upload = await env.FILES.createMultipartUpload(key, { httpMetadata: { contentType: type } });
 		// Hold the code while the parts upload, so a second upload cannot claim it.
-		await writeRecord(env, code, { type: 'pending', key, name, createdAt: new Date().toISOString() });
+		await writeRecord(env, code, {
+			type: 'pending',
+			key,
+			name,
+			cacheControl: cachePolicy(cache),
+			createdAt: new Date().toISOString(),
+		});
 		return json({ code, key, uploadId: upload.uploadId, partSize: PART_SIZE }, 201);
 	},
 
@@ -135,7 +163,7 @@ const routes = {
 	},
 
 	'POST /api/multipart/complete': async (request, env) => {
-		const { code, key, uploadId, parts, name, size, type } = await request.json();
+		const { code, key, uploadId, parts, name, size, type, cache } = await request.json();
 		if (!code || !key || !uploadId || !Array.isArray(parts)) return fail(400, 'Bad complete request');
 
 		const upload = env.FILES.resumeMultipartUpload(key, uploadId);
@@ -147,6 +175,7 @@ const routes = {
 			name: name || 'file',
 			size: object.size ?? size,
 			contentType: type || 'application/octet-stream',
+			cacheControl: cachePolicy(cache),
 			createdAt: new Date().toISOString(),
 		});
 		return json({ code, url: shortUrl(request, code) }, 201);

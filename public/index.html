@@ -46,6 +46,26 @@
 
 		.tabs { display: flex; gap: 6px; margin-bottom: 16px; }
 
+		.cache-row {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			margin-bottom: 14px;
+			color: var(--muted);
+			font-size: 13px;
+		}
+
+		.cache-row select {
+			flex: 1;
+			padding: 8px 10px;
+			background: var(--panel);
+			border: 1px solid var(--line);
+			border-radius: 8px;
+			color: var(--text);
+			font: inherit;
+			font-size: 13px;
+		}
+
 		.tab {
 			flex: 1;
 			padding: 10px;
@@ -177,6 +197,18 @@
 			<button class="tab" role="tab" aria-selected="false" data-panel="text">Text</button>
 		</div>
 
+		<label class="cache-row">
+			Cache
+			<select id="cache">
+				<option value="permanent">Permanent - keep offline (default)</option>
+				<option value="week">1 week</option>
+				<option value="day">1 day</option>
+				<option value="hour">1 hour</option>
+				<option value="revalidate">Always recheck</option>
+				<option value="none">Never cache</option>
+			</select>
+		</label>
+
 		<section class="panel active" id="panel-file">
 			<div id="drop" tabindex="0" role="button">
 				<strong>Drop files here</strong>
@@ -216,6 +248,8 @@
 		 * needed. The stored key is the fallback for when Access is not in front of this page.
 		 */
 		if (/Mac|iPhone|iPad/.test(navigator.platform)) document.getElementById('paste-key').textContent = '⌘V';
+
+		const cacheChoice = () => document.getElementById('cache').value;
 
 		const uploadKey = () => localStorage.getItem('uploadKey') || '';
 		const authHeaders = () => (uploadKey() ? { 'X-Upload-Token': uploadKey() } : {});
@@ -310,7 +344,11 @@
 		};
 
 		const uploadSmall = (file, row) => {
-			const query = new URLSearchParams({ name: file.name, type: file.type || 'application/octet-stream' });
+			const query = new URLSearchParams({
+				name: file.name,
+				type: file.type || 'application/octet-stream',
+				cache: cacheChoice(),
+			});
 			return send('POST', `/api/upload?${query}`, file, (fraction) => row.progress(fraction));
 		};
 
@@ -318,6 +356,7 @@
 			const created = await postJson('/api/multipart/create', {
 				name: file.name,
 				type: file.type || 'application/octet-stream',
+				cache: cacheChoice(),
 			});
 			const size = created.partSize || partSize;
 			const total = Math.ceil(file.size / size);
@@ -344,6 +383,7 @@
 				name: file.name,
 				size: file.size,
 				type: file.type || 'application/octet-stream',
+				cache: cacheChoice(),
 				parts,
 			});
 		};
@@ -420,7 +460,11 @@
 			const code = document.getElementById('link-code');
 			const row = addRow(url.value, 'link');
 			try {
-				const result = await postJson('/api/shorten', { url: url.value, code: code.value.trim() || undefined });
+				const result = await postJson('/api/shorten', {
+					url: url.value,
+					code: code.value.trim() || undefined,
+					cache: cacheChoice(),
+				});
 				row.done(result.url);
 				url.value = '';
 				code.value = '';

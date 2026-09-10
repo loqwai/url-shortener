@@ -95,14 +95,14 @@ describe('shortening', () => {
 		expect(await response.json()).toEqual({ code: 'mine', url: 'https://2cb.pw/mine' });
 	});
 
-	it('generates a code when none is given', async () => {
+	it('generates an office-number style code when none is given', async () => {
 		const response = await SELF.fetch('https://2cb.pw/api/shorten', {
 			method: 'POST',
 			headers: { ...AUTH, 'Content-Type': 'application/json' },
 			body: JSON.stringify({ url: 'https://example.com/long' }),
 		});
 		const { code } = await response.json();
-		expect(code).toMatch(/^[a-zA-Z0-9]{6}$/);
+		expect(code).toMatch(/^[a-z]{3}\.[a-z]{3}\.[a-z]{4}$/);
 	});
 
 	it('refuses a code that is already taken', async () => {
@@ -230,5 +230,68 @@ describe('authorization', () => {
 		await env.URL_MAP.put('open', 'https://example.com/open');
 		const response = await SELF.fetch('https://2cb.pw/open', { redirect: 'manual' });
 		expect(response.status).toBe(301);
+	});
+});
+
+describe('cache policy', () => {
+	it('defaults an upload to permanent, for offline use', async () => {
+		await SELF.fetch('https://2cb.pw/api/upload?name=a.txt&type=text/plain&code=cp1', {
+			method: 'POST',
+			headers: AUTH,
+			body: 'x',
+		});
+		const response = await SELF.fetch('https://2cb.pw/cp1');
+		expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+	});
+
+	it('honours a chosen preset', async () => {
+		await SELF.fetch('https://2cb.pw/api/upload?name=a.txt&type=text/plain&code=cp2&cache=hour', {
+			method: 'POST',
+			headers: AUTH,
+			body: 'x',
+		});
+		const response = await SELF.fetch('https://2cb.pw/cp2');
+		expect(response.headers.get('cache-control')).toBe('public, max-age=3600');
+	});
+
+	it('accepts a raw number of seconds', async () => {
+		await SELF.fetch('https://2cb.pw/api/upload?name=a.txt&type=text/plain&code=cp3&cache=90', {
+			method: 'POST',
+			headers: AUTH,
+			body: 'x',
+		});
+		const response = await SELF.fetch('https://2cb.pw/cp3');
+		expect(response.headers.get('cache-control')).toBe('public, max-age=90');
+	});
+
+	it('falls back to permanent for a value it does not understand', async () => {
+		await SELF.fetch('https://2cb.pw/api/upload?name=a.txt&type=text/plain&code=cp4&cache=wat', {
+			method: 'POST',
+			headers: AUTH,
+			body: 'x',
+		});
+		const response = await SELF.fetch('https://2cb.pw/cp4');
+		expect(response.headers.get('cache-control')).toContain('immutable');
+	});
+
+	it('sends a permanent link as a 301, and a perishable one as a 302', async () => {
+		const shorten = (code, cache) =>
+			SELF.fetch('https://2cb.pw/api/shorten', {
+				method: 'POST',
+				headers: { ...AUTH, 'Content-Type': 'application/json' },
+				body: JSON.stringify({ url: 'https://example.com/x', code, cache }),
+			});
+
+		await shorten('cp5');
+		await shorten('cp6', 'none');
+
+		const permanent = await SELF.fetch('https://2cb.pw/cp5', { redirect: 'manual' });
+		expect(permanent.status).toBe(301);
+		expect(permanent.headers.get('cache-control')).toContain('immutable');
+
+		// A 301 would be pinned by the browser regardless of the header, so it must not be one.
+		const perishable = await SELF.fetch('https://2cb.pw/cp6', { redirect: 'manual' });
+		expect(perishable.status).toBe(302);
+		expect(perishable.headers.get('cache-control')).toBe('no-store');
 	});
 });
