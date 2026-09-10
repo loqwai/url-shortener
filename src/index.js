@@ -1,5 +1,5 @@
 import { authorizeWrite } from './auth.js';
-import { claimCode, deleteRecord, isValidCode, listRecords, readRecord, writeRecord } from './store.js';
+import { ROOT_CODE, claimCode, deleteRecord, isValidCode, listRecords, readRecord, writeRecord } from './store.js';
 
 /** Chunk size the browser uploads with. Must stay under the Workers request-body limit. */
 const PART_SIZE = 64 * 1024 * 1024;
@@ -29,7 +29,9 @@ const serveFile = async (request, env, record) => {
 	const headers = new Headers();
 	object.writeHttpMetadata(headers);
 	headers.set('etag', object.httpEtag);
-	headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+	// Uploads never change under their code, so they pin hard. The UI is republished in
+	// place, so it must revalidate or a phone would hold an old build forever.
+	headers.set('Cache-Control', record.cacheControl || 'public, max-age=31536000, immutable');
 	headers.set('Accept-Ranges', 'bytes');
 	if (record.contentType) headers.set('Content-Type', record.contentType);
 
@@ -60,10 +62,10 @@ const handleRead = async (request, env) => {
 	// a login and then lands here, while gating / would wall off every public short link.
 	if (code === 'up') return Response.redirect(new URL('/', url).toString(), 302);
 
-	// The asset layer answers / with the UI before this Worker runs; this is the fallback.
-	if (!isValidCode(code)) return env.ASSETS.fetch(request);
+	// The root is the UI, stored as an ordinary record, so it takes the same path as any file.
+	if (code !== '' && !isValidCode(code)) return fail(404, 'Not found');
 
-	const record = await readRecord(env, code);
+	const record = await readRecord(env, code === '' ? ROOT_CODE : code);
 	if (!record) return fail(404, 'Not found');
 	if (record.type === 'pending') return fail(409, 'Still uploading');
 	if (record.type === 'file') return serveFile(request, env, record);
@@ -86,10 +88,14 @@ const routes = {
 		const params = new URL(request.url).searchParams;
 		const name = params.get('name') || 'file';
 		const contentType = params.get('type') || 'application/octet-stream';
-		const { code, error } = await claimCode(env, params.get('code'));
+
+		// Publishing the UI overwrites one fixed record instead of claiming a new code, and
+		// must revalidate rather than pin, since its URL never changes.
+		const publishingUi = params.get('root') === '1';
+		const { code, error } = publishingUi ? { code: ROOT_CODE } : await claimCode(env, params.get('code'));
 		if (error) return fail(409, error);
 
-		const key = `${code}/${name}`;
+		const key = publishingUi ? `${ROOT_CODE}/${name}` : `${code}/${name}`;
 		const object = await env.FILES.put(key, request.body, { httpMetadata: { contentType } });
 
 		await writeRecord(env, code, {
@@ -98,6 +104,7 @@ const routes = {
 			name,
 			size: object.size,
 			contentType,
+			cacheControl: publishingUi ? 'public, max-age=0, must-revalidate' : undefined,
 			createdAt: new Date().toISOString(),
 		});
 		return json({ code, url: shortUrl(request, code) }, 201);

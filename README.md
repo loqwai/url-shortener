@@ -6,6 +6,15 @@ URL shortener and file host on Cloudflare Workers.
   Add `?dl` to force a download.
 - `GET /` - the UI. Drag-drop files, paste screenshots, shorten links, post text.
 - `GET /up` - redirects to the UI. It exists as a path for Cloudflare Access to gate.
+
+The UI is not a bundled static asset. It is stored as ordinary content under the reserved
+key `_root` and served by the same code path as any uploaded file, so this Worker has no
+asset binding and the root needs no special case. Codes must begin with an alphanumeric,
+so no user-supplied code can collide with `_root`.
+
+Because the UI is content, `npm run deploy` both deploys the Worker and republishes
+`public/index.html`; a Worker deploy alone would leave the live page on an older build.
+Publishing needs `UPLOAD_KEY` set to the Worker's `UPLOAD_TOKEN` secret.
 - `POST /api/*` - write endpoints. **Never open**: every write requires either a verified
   Cloudflare Access JWT (`ACCESS_TEAM_DOMAIN` + `ACCESS_AUD` vars) or the `UPLOAD_TOKEN`
   secret sent as `X-Upload-Token`. With neither configured, writes are refused.

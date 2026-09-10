@@ -12,12 +12,50 @@ beforeEach(async () => {
 });
 
 describe('reading', () => {
-	it('serves a UI at the root that both uploads and shortens', async () => {
+	it('serves the published UI at the root', async () => {
+		await SELF.fetch('https://2cb.pw/api/upload?root=1&name=index.html&type=text/html', {
+			method: 'POST',
+			headers: AUTH,
+			body: '<h1>Drop files here</h1><button>Shorten</button>',
+		});
+
 		const response = await SELF.fetch('https://2cb.pw/');
 		expect(response.status).toBe(200);
-		const body = await response.text();
-		expect(body).toContain('Drop files here');
-		expect(body).toContain('Shorten');
+		expect(await response.text()).toContain('Drop files here');
+		expect(response.headers.get('content-type')).toContain('text/html');
+	});
+
+	it('lets the root UI revalidate instead of pinning it forever', async () => {
+		await SELF.fetch('https://2cb.pw/api/upload?root=1&name=index.html&type=text/html', {
+			method: 'POST',
+			headers: AUTH,
+			body: '<h1>first</h1>',
+		});
+		const response = await SELF.fetch('https://2cb.pw/');
+		expect(response.headers.get('cache-control')).toBe('public, max-age=0, must-revalidate');
+
+		// Republishing must actually replace what the root serves.
+		await SELF.fetch('https://2cb.pw/api/upload?root=1&name=index.html&type=text/html', {
+			method: 'POST',
+			headers: AUTH,
+			body: '<h1>second</h1>',
+		});
+		expect(await (await SELF.fetch('https://2cb.pw/')).text()).toContain('second');
+	});
+
+	it('404s the root when no UI has been published', async () => {
+		const response = await SELF.fetch('https://2cb.pw/');
+		expect(response.status).toBe(404);
+	});
+
+	it('keeps uploads pinned immutably', async () => {
+		await SELF.fetch('https://2cb.pw/api/upload?name=a.txt&type=text/plain&code=cc1', {
+			method: 'POST',
+			headers: AUTH,
+			body: 'x',
+		});
+		const response = await SELF.fetch('https://2cb.pw/cc1');
+		expect(response.headers.get('cache-control')).toContain('immutable');
 	});
 
 	it('sends /up, the Access door, to the UI', async () => {

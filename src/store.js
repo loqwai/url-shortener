@@ -3,10 +3,19 @@
  *
  * Links created before file hosting existed are stored as a bare URL string, so `readRecord`
  * treats any non-JSON value as a legacy redirect. New records are JSON.
+ *
+ * The upload UI is itself a record (see ROOT_CODE), which is why this Worker needs no static
+ * asset binding: serving the root and serving a hosted file are the same code path.
  */
 
 const ALPHABET = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const RESERVED = new Set(['api', 'index.html', 'favicon.ico', 'robots.txt', 'up', 'admin']);
+const RESERVED = new Set(['api', 'up']);
+
+/**
+ * The UI is stored as ordinary content under this key, so the root is just another lookup.
+ * CODE_PATTERN requires a leading alphanumeric, so no user-supplied code can ever reach it.
+ */
+export const ROOT_CODE = '_root';
 const CODE_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
 export const randomCode = (length = 6) => {
