@@ -15,8 +15,13 @@ import {
 const PART_SIZE = 64 * 1024 * 1024;
 const INLINE_TYPES = /^(image\/|video\/|audio\/|text\/|application\/pdf$|application\/json$)/;
 
+// API answers are per-caller and change as soon as anything is created or deleted, so they
+// must not sit in a browser or proxy cache and be replayed.
 const json = (body, status = 200) =>
-	new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+	new Response(JSON.stringify(body), {
+		status,
+		headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+	});
 
 const fail = (status, error) => json({ error }, status);
 

@@ -100,9 +100,41 @@ export const deleteRecord = async (env, code) => {
 	return true;
 };
 
-export const listRecords = async (env, limit = 50) => {
-	const { keys } = await env.URL_MAP.list({ limit });
-	return keys
-		.map(({ name, metadata }) => ({ code: name, ...(metadata || {}) }))
-		.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+/**
+ * Lists everything for the browse view, newest first.
+ *
+ * KV list only returns the metadata written alongside a record, which carries enough to
+ * describe a file but never the target of a link. Legacy links have no metadata at all. So
+ * only file records are served from metadata; anything else has its value read.
+ */
+export const listRecords = async (env, max = 500) => {
+	const keys = [];
+	let cursor;
+
+	do {
+		const page = await env.URL_MAP.list({ limit: 1000, cursor });
+		keys.push(...page.keys);
+		cursor = page.list_complete ? undefined : page.cursor;
+	} while (cursor && keys.length < max);
+
+	const items = await Promise.all(
+		keys
+			.slice(0, max)
+			.filter(({ name }) => name !== ROOT_CODE)
+			.map(async ({ name, metadata }) => {
+				if (metadata && metadata.type === 'file') return { code: name, ...metadata };
+				const record = await readRecord(env, name);
+				if (!record) return { code: name };
+				const { key, ...rest } = record;
+				return { code: name, ...rest };
+			})
+	);
+
+	// Undated legacy entries sort after everything dated, then alphabetically among themselves.
+	return items.sort((a, b) => {
+		if (a.createdAt && b.createdAt) return b.createdAt.localeCompare(a.createdAt);
+		if (a.createdAt) return -1;
+		if (b.createdAt) return 1;
+		return a.code.localeCompare(b.code);
+	});
 };

@@ -295,3 +295,49 @@ describe('cache policy', () => {
 		expect(perishable.headers.get('cache-control')).toBe('no-store');
 	});
 });
+
+describe('browsing', () => {
+	it('lists links and files with enough detail to identify them', async () => {
+		await env.URL_MAP.put('old-link', 'https://example.com/legacy');
+		await SELF.fetch('https://2cb.pw/api/shorten', {
+			method: 'POST',
+			headers: { ...AUTH, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ url: 'https://example.com/new', code: 'new-link' }),
+		});
+		await SELF.fetch('https://2cb.pw/api/upload?name=photo.jpg&type=image/jpeg&code=a-file', {
+			method: 'POST',
+			headers: AUTH,
+			body: 'jpegbytes',
+		});
+
+		const { items } = await (await SELF.fetch('https://2cb.pw/api/list', { headers: AUTH })).json();
+		const byCode = Object.fromEntries(items.map((item) => [item.code, item]));
+
+		expect(byCode['a-file']).toMatchObject({ type: 'file', name: 'photo.jpg', size: 9 });
+		expect(byCode['new-link']).toMatchObject({ type: 'url', url: 'https://example.com/new' });
+		// The whole point: a legacy bare-string link must still show its target.
+		expect(byCode['old-link']).toMatchObject({ type: 'url', url: 'https://example.com/legacy' });
+	});
+
+	it('sorts newest first and hides the UI record', async () => {
+		await SELF.fetch('https://2cb.pw/api/upload?root=1&name=index.html&type=text/html', {
+			method: 'POST',
+			headers: AUTH,
+			body: '<h1>ui</h1>',
+		});
+		await env.URL_MAP.put('undated', 'https://example.com/undated');
+		await SELF.fetch('https://2cb.pw/api/shorten', {
+			method: 'POST',
+			headers: { ...AUTH, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ url: 'https://example.com/fresh', code: 'fresh' }),
+		});
+
+		const { items } = await (await SELF.fetch('https://2cb.pw/api/list', { headers: AUTH })).json();
+		expect(items.map((item) => item.code)).toEqual(['fresh', 'undated']);
+	});
+
+	it('needs authorization to browse', async () => {
+		const response = await SELF.fetch('https://2cb.pw/api/list');
+		expect(response.status).toBe(403);
+	});
+});

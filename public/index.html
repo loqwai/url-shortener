@@ -130,6 +130,32 @@
 
 		#items { margin-top: 22px; display: flex; flex-direction: column; gap: 10px; }
 
+		#browse-list { display: flex; flex-direction: column; gap: 8px; }
+
+		.entry {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			background: var(--panel);
+			border: 1px solid var(--line);
+			border-radius: 10px;
+			padding: 10px 12px;
+		}
+
+		.entry .body { flex: 1; min-width: 0; }
+		.entry .code { font-weight: 600; font-size: 14px; }
+		.entry .code .kind { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 12px; }
+		.entry .target {
+			color: var(--muted);
+			font-size: 12px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			margin-top: 2px;
+		}
+		.entry a.code { color: var(--accent); text-decoration: none; }
+		.entry .danger { border-color: #5b2b2b; color: var(--bad); }
+
 		.item {
 			background: var(--panel);
 			border: 1px solid var(--line);
@@ -195,6 +221,7 @@
 			<button class="tab" role="tab" aria-selected="true" data-panel="file">File</button>
 			<button class="tab" role="tab" aria-selected="false" data-panel="link">Link</button>
 			<button class="tab" role="tab" aria-selected="false" data-panel="text">Text</button>
+			<button class="tab" role="tab" aria-selected="false" data-panel="browse">Browse</button>
 		</div>
 
 		<label class="cache-row">
@@ -231,6 +258,12 @@
 				<input type="text" id="text-name" placeholder="filename (optional, e.g. notes.md)" autocapitalize="off" spellcheck="false" />
 				<button class="go" type="submit">Post text</button>
 			</form>
+		</section>
+
+		<section class="panel" id="panel-browse">
+			<input type="text" id="browse-filter" placeholder="Filter by code, name or target&hellip;" autocapitalize="off" spellcheck="false" />
+			<div id="browse-count" class="optional"></div>
+			<div id="browse-list"></div>
 		</section>
 
 		<div id="items"></div>
@@ -407,6 +440,7 @@
 				document.querySelectorAll('.panel').forEach((panel) => {
 					panel.classList.toggle('active', panel.id === `panel-${tab.dataset.panel}`);
 				});
+				if (tab.dataset.panel === 'browse') loadBrowse();
 			});
 		});
 
@@ -484,6 +518,81 @@
 			body.value = '';
 			nameField.value = '';
 		});
+
+		// --- browse ---
+		const browseList = document.getElementById('browse-list');
+		const browseCount = document.getElementById('browse-count');
+		const browseFilter = document.getElementById('browse-filter');
+		let entries = [];
+
+		const describe = (entry) => {
+			if (entry.type === 'file') return entry.name || 'file';
+			if (entry.type === 'pending') return 'upload in progress';
+			return entry.url || '';
+		};
+
+		const renderBrowse = () => {
+			const needle = browseFilter.value.trim().toLowerCase();
+			const shown = entries.filter((entry) => !needle || `${entry.code} ${describe(entry)}`.toLowerCase().includes(needle));
+
+			browseCount.textContent = `${shown.length} of ${entries.length}`;
+			browseList.replaceChildren();
+
+			shown.forEach((entry) => {
+				const row = document.createElement('div');
+				row.className = 'entry';
+
+				const kind = entry.type === 'file' ? `file${entry.size ? ` &middot; ${humanSize(entry.size)}` : ''}` : 'link';
+				row.innerHTML = `<div class="body">
+						<a class="code" target="_blank" rel="noopener"></a>
+						<div class="target"></div>
+					</div>
+					<button class="copy">Copy</button>
+					<button class="copy danger">Delete</button>`;
+
+				const link = row.querySelector('.code');
+				link.href = `/${entry.code}`;
+				link.textContent = entry.code;
+				link.insertAdjacentHTML('beforeend', `<span class="kind">${kind}</span>`);
+				row.querySelector('.target').textContent = describe(entry);
+
+				const [copy, remove] = row.querySelectorAll('button');
+				copy.addEventListener('click', async () => {
+					await navigator.clipboard.writeText(`${origin}/${entry.code}`);
+					copy.textContent = 'Copied';
+					copy.classList.add('done');
+				});
+				remove.addEventListener('click', async () => {
+					if (!window.confirm(`Delete ${entry.code}?`)) return;
+					remove.disabled = true;
+					try {
+						await postJson('/api/delete', { code: entry.code });
+						entries = entries.filter((other) => other.code !== entry.code);
+						renderBrowse();
+					} catch (error) {
+						remove.disabled = false;
+						remove.textContent = 'Failed';
+					}
+				});
+
+				browseList.append(row);
+			});
+		};
+
+		const loadBrowse = async () => {
+			browseCount.textContent = 'Loading…';
+			try {
+				const response = await fetch('/api/list', { headers: authHeaders() });
+				const payload = await response.json();
+				if (!response.ok) throw new Error(payload.error || 'Could not load');
+				entries = payload.items || [];
+				renderBrowse();
+			} catch (error) {
+				browseCount.textContent = error.message;
+			}
+		};
+
+		browseFilter.addEventListener('input', renderBrowse);
 
 		/** Offers a key field, for when this page is not behind Cloudflare Access. */
 		const askForKey = (message) => {
